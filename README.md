@@ -1,6 +1,6 @@
 # CMP 170HX + vLLM
 
-**64 GB of HBM2e for a mining-card price, serving an 80B model at 116 tok/s and 150 watts.**
+**64 GB of HBM2e, serving an 80B model at 116 tok/s and 150 watts.**
 
 The NVIDIA CMP 170HX is a cryptocurrency mining card built on the GA100 die,
 the same silicon as the A100. It has 64 GB of HBM2e at 1.5 TB/s. It also has no
