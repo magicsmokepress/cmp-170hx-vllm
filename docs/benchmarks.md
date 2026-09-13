@@ -214,6 +214,148 @@ figure, from a script that made two mistakes at once:
 The current script reports both contended and uncontended figures, because a
 real serving workload is contended and a spec sheet is not.
 
+## Ornith-1.5-35B-A3B
+
+[ornith-ai/Ornith-1.5-35B-A3B](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B)
+is a hybrid-attention MoE (256 experts, 8 active, ~3B active parameters) with
+a 256k context, a vision encoder, and a multi-token-prediction head. Measured
+on the same card, the same day, with the same harness and the same 150 W cap
+as the Qwen3-Next-80B above. Raw data: `bench/data/ornith35b_*`.
+
+### Against the 80B, engine-matched
+
+Both on vLLM 0.27.1. Ornith uses the official FP8 checkpoint (36.7 GiB).
+
+| | Ornith FP8 | Ornith FP8 + MTP k=2 | Qwen3-Next-80B W4A16 |
+|---|---|---|---|
+| decode, single stream | 122.5 tok/s | **150.5** | 115.7 |
+| decode, 4 concurrent | **345.4** | 273.1 | 351.6 |
+| decode, 8 concurrent | **597.3** (8 slots) | 252.0 | 352.4 (4 slots) |
+| prefill, ~8.9k tokens | **9,145** | 8,917 | 6,800-7,950 |
+| decode at 24k context | **117.8** | 74.4 | 111.9 |
+| TTFT, 24k prefix, cold / warm | **3.06 s / 0.13 s** | 3.16 s / 0.32 s ¹ | 3.39 s / 0.14 s |
+| J/token, 8 concurrent | **0.241** | 0.321 | 0.412 |
+| weights | 36.7 GiB | 36.7 GiB | 40.9 GiB |
+| 4-turn recall probe | 4/4 | not run | 3/4 |
+
+¹ From the 24k decode run's two requests. The other two columns come from the
+four-turn shared-prefix run. Both are a cold request followed by a warm prefix
+hit, but they are not the same test.
+
+Without MTP, Ornith matches or beats the 80B on every row except 4-concurrent
+decode, where it is 2% behind, and it does so with 4.2 GiB less in weights.
+
+### FP8 runs on this card
+
+The checkpoint is `compressed-tensors` W8A8 float. The 170HX has no FP8 tensor
+cores, and vLLM handles that correctly: it routes the checkpoint to the
+weight-only `w8a16` scheme, so the weights stay FP8 and the maths runs in bf16.
+
+Two environment faults stopped it loading at first. Neither is an FP8 or
+`sm_80` limitation:
+
+| error | cause | fix |
+|---|---|---|
+| `failed to open libnvrtc-builtins.so.13.3` | the JIT loads nvrtc from `CUDA_HOME` but its matching builtins library is not on the loader path | `LD_LIBRARY_PATH=$CUDA_HOME/lib` |
+| `Ninja is required to load C++ extensions` | ninja is installed in the venv, but launching `vllm` by absolute path leaves the venv's `bin` off `PATH` | `PATH=$VENV/bin:$PATH` |
+
+### The engine mattered more than the quantization
+
+The same model on llama.cpp (`qwen35moe`) looks far worse, and almost all of
+the gap is the engine:
+
+| | llama.cpp Q4_K_M | llama.cpp Q8_0 | vLLM FP8 |
+|---|---|---|---|
+| decode, single stream | 114.5 | 104.7 | 122.5 |
+| decode, 8 concurrent | 268.6 | 274.7 | 597.3 |
+| prefill | 2,333 | 2,333 | 9,145 |
+| TTFT, 24k prefix, cold | 11.5 s | 11.5 s | 3.06 s |
+
+Halving the weight bits on llama.cpp (Q8_0 to Q4_K_M) bought 9% single-stream
+and nothing at concurrency or prefill. Changing engine quadrupled prefill and
+doubled 8-concurrent throughput. llama.cpp also ignores the checkpoint's MTP
+tensors (`model has unused tensor blk.40.nextn.*`), so there is no
+speculative decoding on that path.
+
+If you compare models across engines, you are mostly measuring the engines.
+
+### MTP speculative decoding
+
+The MTP head ships in the checkpoint and needs no separate drafter. vLLM
+builds the draft config from `model_type: qwen3_5_moe` on its own:
+
+```
+--speculative-config '{"method":"mtp","num_speculative_tokens":2}'
+```
+
+| | no MTP | MTP k=2 | MTP k=1 + batch 8192 |
+|---|---|---|---|
+| decode, single stream | 122.5 | **150.5** | 141.8 |
+| decode, 4 concurrent | **345.4** | 273.1 | 260.7 |
+| decode, 8 concurrent | **597.3** | 252.0 | 572.4 |
+| prefill | 9,145 | 8,917 | **11,183** |
+| decode at 24k context | **117.8** | 74.4 | 69.4 |
+| KV cache | 625,916 tokens | ~400,000 | 411,420 |
+
+**Raise the batch budget whenever you enable MTP.** Speculative decoding makes
+vLLM set `max_num_scheduled_tokens` to 2048. At k=2 that dropped 8-concurrent
+decode to 252 tok/s while the card drew only 80.9 W, which means it was
+stalled, not busy. Adding `--max-num-batched-tokens 8192` brought it back to
+572 and gave 11,183 tok/s prefill, the fastest prefill measured on this card.
+
+**MTP costs about 40% at long context**, in both k=1 and k=2, so it is not a
+tuning artefact. 4-concurrent decode also stayed about 25% down in both
+configurations, and we do not have an explanation for why 8-concurrent
+recovered and 4-concurrent did not.
+
+There is no single best setting, so choose by workload:
+
+| workload | configuration |
+|---|---|
+| single stream, short prompts | MTP k=2 |
+| long context | no MTP |
+| high concurrency | no MTP, or MTP k=1 with a raised batch budget |
+| fastest prefill | MTP k=1 with a raised batch budget |
+
+### Reasoning budget
+
+Ornith is a reasoning model: every reply opens with a `<think>` block.
+`bench/reasoning_budget.py` measures how much it thinks and what limiting it
+costs, across 10 prompts (8 with checkable answers), 6 conditions and 3
+repetitions, at the card's recommended temperature 0.6.
+
+| condition | correct | empty answers | reasoning tokens, median / max |
+|---|---|---|---|
+| unbounded | **24/24** | 0 | 96 / 447 |
+| thinking disabled | 20/24 | 0 | 1 / 1 |
+| `thinking_token_budget` 1024 | **24/24** | 0 | 101 / 634 |
+| `thinking_token_budget` 256 | 22/24 | 0 | 102 / 257 |
+| `thinking_token_budget` 64 | 22/24 | 0 | 65 / 65 |
+| `max_tokens` 256 | 19/24 | **7** | 100 / 256 |
+
+**Left alone, it kept its reasoning short.** The median was 96 tokens, under a
+second at single-stream speed, and nothing came near the 16k cap. The longest
+reasoning was on the number-theory prompt and on an open-ended one-sentence
+prose prompt (339 tokens).
+
+**A tight budget gives confident wrong answers, not hedges.** At 256 and 64,
+the hardest prompt (answer 301) came back as a flat "121" in 4 of 6 runs.
+Disabling thinking was worse than any budget: it got a three-step word problem
+wrong every time.
+
+**Never use `max_tokens` as the limit.** A 256 cap with no thinking budget
+returned 7 empty answers out of 30, each with `finish_reason=length`, because
+the cap landed mid-thought. The response looks normal and contains nothing.
+
+If you want a limit, use `thinking_token_budget`. It is an exact hard cap (64
+gave at most 65 tokens: the budget plus the forced end-of-thinking token), and
+1024 cost nothing here. It needs `--reasoning-parser qwen3` and
+`VLLM_USE_V2_MODEL_RUNNER=0`, because the V2 runner rejects the parameter.
+
+**Caveat:** these are short, single-turn prompts. Ornith is trained for long
+agentic coding, which this test does not exercise, so it says nothing about
+reasoning length on those tasks.
+
 ## One card that does not fit: gpt-oss-120b
 
 63.4 GB of MXFP4 weights on a 64 GB card does **not** fit. Split across the
@@ -232,6 +374,12 @@ Comparable to the 80B on the 170HX alone. Given it costs a second card, the
 ## Reproducing
 
 ```bash
+# reasoning length and budget cost (needs --reasoning-parser on the server)
+python3 bench/reasoning_budget.py http://localhost:8000 your-model out.jsonl 3
+
+# prefill, freshly randomised prompt per rep
+python3 bench/prefill.py http://localhost:8000 your-model none 10000 3
+
 # single point
 python3 bench/bench.py --url http://localhost:8000 --model your-model \
         --gpu <nvidia-smi index> --ntok 1500 --conc 1 --label baseline
