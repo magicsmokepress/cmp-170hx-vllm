@@ -153,8 +153,10 @@ expect hotter under sustained load.
 
 1. [docs/hardware.md](docs/hardware.md): identifying the card, PCIe, power,
    cooling, and what "Device Max: 1" costs you.
-2. [docs/setup.md](docs/setup.md): driver, CUDA, vLLM, and the two pinning
-   rules that will otherwise send your job to the wrong GPU.
+2. [docs/setup.md](docs/setup.md): the full vLLM setup. Driver, CUDA, getting
+   a model that fits, a working invocation with every flag explained, how to
+   size the memory knob, how to verify it is really serving, and the two
+   pinning rules that will otherwise send your job to the wrong GPU.
 3. [docs/benchmarks.md](docs/benchmarks.md): every number above, with method.
 4. [docs/tuning.md](docs/tuning.md): why we do not overclock this card, with
    the measurement that closed the question.

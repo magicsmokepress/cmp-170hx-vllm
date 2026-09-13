@@ -94,6 +94,37 @@ TimeoutStartSec=900
 TimeoutStopSec=180
 ```
 
+## Getting a model that fits
+
+64 GB is the whole reason to use this card, so the sizing question is "what can
+I fit" rather than "what can I squeeze". Weights plus KV cache plus a little
+overhead have to land under 64 GB, and you want the KV cache to be generous
+rather than minimal.
+
+The model benchmarked throughout these docs:
+
+```bash
+pip install huggingface_hub[cli]
+hf download RedHatAI/Qwen3-Next-80B-A3B-Instruct-quantized.w4a16 \
+   --local-dir ~/models/qwen3next-w4a16
+```
+
+40.9 GB on disk, leaving ~20 GB for KV cache and overhead. It is an MoE with
+~3B active parameters, which is why it prefills so fast (see
+[benchmarks.md](benchmarks.md)).
+
+Rough guidance for a 64 GB card:
+
+| weights | fits | notes |
+|---|---|---|
+| up to ~45 GB | comfortably | leaves 15+ GB of KV cache |
+| 45-55 GB | yes, tightly | KV cache gets thin; check the startup log |
+| over ~58 GB | no | gpt-oss-120b at 63.4 GB does not fit, see benchmarks.md |
+
+W4A16 (`compressed-tensors`) is the sweet spot. The card is `sm_80`, so it has
+no FP8 tensor cores; do not reach for FP8 quantization expecting Ada-class
+speedups.
+
 ## A working vLLM invocation
 
 This is what runs Qwen3-Next-80B-A3B W4A16 on the card. The full unit is in
@@ -110,6 +141,46 @@ vllm serve /path/to/qwen3next-w4a16 \
   --mamba-ssm-cache-dtype float16 \
   --enable-auto-tool-choice --tool-call-parser hermes \
   --host 0.0.0.0 --port 8000
+```
+
+What each flag is doing, and which ones are 170HX-specific:
+
+| flag | why |
+|---|---|
+| `--served-model-name` | the id clients pass as `model`. Give several aliases if existing callers use different names |
+| `--max-model-len 65536` | longest single request. Does **not** control memory on its own, see below |
+| `--max-num-seqs 4` | concurrent slots. Requests past this queue, and client concurrency above it buys nothing (measured: C4 and C8 are identical) |
+| `--gpu-memory-utilization 0.75` | **the memory knob.** 0.75 of 64 GB, not of what is free |
+| `--enable-prefix-caching` | reuse the KV of a shared prefix across requests. Large win for multi-turn |
+| `--mamba-cache-mode align` | required for prefix caching on a hybrid attention/SSM model. Without it, caching is silently off |
+| `--mamba-ssm-cache-dtype float16` | halves the recurrent-state cache |
+| `--enable-auto-tool-choice --tool-call-parser hermes` | OpenAI-style tool calling. Parser must match the model's template |
+| `--host 0.0.0.0` | listens on all interfaces. Use `127.0.0.1` unless you intend LAN exposure; **vLLM has no authentication by default** |
+
+Nothing here is 170HX-specific except by implication: the card's size is what
+lets you set `--max-num-seqs` and `--gpu-memory-utilization` generously in the
+first place. The card-specific parts of the setup are the UUID pinning and the
+start timeout above.
+
+### Verify it is actually serving
+
+A vLLM process can answer `/v1/models` with HTTP 200 while being unable to
+generate a single token, so check a real completion and assert on the token
+count:
+
+```bash
+curl -s http://127.0.0.1:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen3-next-80b","prompt":"Say OK.","max_tokens":5}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["usage"]["completion_tokens"])'
+```
+
+Expect a non-zero number. Then read the two KV lines from the startup log,
+because a server that came up with almost no KV cache starts cleanly and then
+serves one request at a time:
+
+```bash
+journalctl --user -u vllm-80b | grep -E "KV cache (memory|size)"
 ```
 
 ### Sizing `--gpu-memory-utilization`
@@ -154,6 +225,37 @@ The recurrent state resumes exactly. Measured on a 24k-token shared prefix over
 four turns: TTFT 11.8 s cold, **0.49 s warm**, all answers correct. We migrated
 a service to llama.cpp on the strength of that "cannot cache" claim and it cost
 us a 2.2x decode regression at long context. Do not repeat that.
+
+## Speculative decoding, and why there is no config for it here
+
+Several benchmarks in this repo cover Qwen3.8-27B with DFlash2 speculative
+decoding, which is the fastest short-prompt configuration measured on this
+card. **That stack is not stock vLLM and there is deliberately no unit file for
+it in `configs/`.**
+
+It comes from [syv-ai/qwen38-27b-rtx3090](https://github.com/syv-ai/qwen38-27b-rtx3090),
+which ships its own vLLM build with patches (split-KV attention for the
+multi-query verify step, a sort-free sampler), a requantized draft model, and a
+launch script. Reproducing it means using that repo, not copying a command line
+out of this one. Its README covers the setup; the 170HX-relevant parts are:
+
+```bash
+CUDA_VISIBLE_DEVICES=GPU-<uuid> \
+  SPEC=dflash2 DFLASH_TOKENS=15 PREFIX_CACHE=1 GPU_UTIL=0.65 \
+  bash single-user/start_qwen.sh
+```
+
+`GPU_UTIL` is lowered from the script's 0.93 default only because this card
+also hosts another service. On a dedicated 170HX leave it alone.
+
+Two things worth taking away even if you never run that stack:
+
+- **Speculative decoding changes the power picture.** It adds a compute-heavy
+  verify step, so unlike a memory-bound MoE it draws 194 W and loses
+  throughput under a tight power cap. See [hardware.md](hardware.md#power).
+- **It makes benchmarks lie.** Decode rate becomes a function of draft
+  acceptance, so a repetitive prompt overstates the server by more than 2x and
+  single runs vary by 25%. See [benchmarks.md](benchmarks.md#method).
 
 ## Power caps at boot
 
