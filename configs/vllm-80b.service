@@ -1,0 +1,59 @@
+# Qwen3-Next-80B-A3B-Instruct W4A16 on a CMP 170HX under vLLM 0.27.1.
+# Installed as a systemd *user* unit: ~/.config/systemd/user/vllm-80b.service
+#   systemctl --user daemon-reload && systemctl --user enable --now vllm-80b
+#
+# Replace the UUID, the model path, and the venv path.
+
+[Unit]
+Description=Qwen3-Next-80B-A3B W4A16 (vLLM, CMP 170HX 64GB)
+StartLimitBurst=3
+StartLimitIntervalSec=900
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+
+# Pin the GPU by UUID, never by index. CUDA orders devices by capability, not
+# by PCI bus, so a bare index is very likely the wrong card in a mixed box.
+#   nvidia-smi --query-gpu=uuid,pci.bus_id,memory.total --format=csv
+Environment=CUDA_VISIBLE_DEVICES=GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+Environment=CUDA_HOME=/opt/cuda
+
+# Not 170HX-specific; drop this if your build is happy with the default.
+Environment=VLLM_USE_FLASHINFER_SAMPLER=0
+
+# --gpu-memory-utilization is the knob that matters, NOT --max-model-len.
+# vLLM claims the pool from the utilization figure regardless; lowering
+# max-model-len alone frees nothing, the surplus just becomes more KV cache.
+# At 0.92 this reported 16.63 GiB / 708,425 KV tokens for a service whose
+# prompts have a p50 of 417 tokens, with KV usage reading 0.0%. At 0.75 it
+# reports 5.85 GiB / 242,534 tokens (still 3.7x concurrency at the full 64k)
+# and hands ~11 GiB of the card back. Read both KV lines in the startup log.
+#
+# Prefix caching on a hybrid attention/SSM model is opt-in, not unavailable:
+# --enable-prefix-caching --mamba-cache-mode align. The recurrent state
+# resumes exactly. Measured on a 24k shared prefix: 11.8 s cold, 0.49 s warm.
+ExecStart=/path/to/.venv-vllm/bin/vllm serve /path/to/qwen3next-w4a16 \
+  --served-model-name qwen3-next-80b \
+  --max-model-len 65536 \
+  --max-num-seqs 4 \
+  --gpu-memory-utilization 0.75 \
+  --enable-prefix-caching --mamba-cache-mode align \
+  --mamba-ssm-cache-dtype float16 \
+  --enable-auto-tool-choice --tool-call-parser hermes \
+  --host 0.0.0.0 \
+  --port 8000
+
+# 43 GB of weights over a Gen2 x8 link takes 79-130 s to load, before vLLM
+# even starts profiling. A default 90 s start timeout kills it mid-load and
+# looks like a crash. This is the single most common 170HX setup failure.
+TimeoutStartSec=900
+TimeoutStopSec=180
+
+Restart=on-failure
+RestartSec=20
+OOMPolicy=continue
+
+[Install]
+WantedBy=default.target

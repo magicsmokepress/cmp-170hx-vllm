@@ -1,0 +1,16 @@
+{"tokens": 1200, "sec": 8.11, "tok_s": 147.95, "watts": 263.9, "j_per_tok": 1.783, "tok_s_per_100w": 56.07, "sm_mhz": 2740, "max_temp": 56, "psamples": 81, "label": "gpu0_cap450_c1_r1"}
+{"tokens": 1200, "sec": 7.89, "tok_s": 152.17, "watts": 265.2, "j_per_tok": 1.743, "tok_s_per_100w": 57.38, "sm_mhz": 2732, "max_temp": 58, "psamples": 79, "label": "gpu0_cap450_c1_r2"}
+{"tokens": 1200, "sec": 8.95, "tok_s": 134.1, "watts": 270.8, "j_per_tok": 2.019, "tok_s_per_100w": 49.53, "sm_mhz": 2732, "max_temp": 60, "psamples": 90, "label": "gpu0_cap400_c1_r1"}
+{"tokens": 1200, "sec": 8.26, "tok_s": 145.26, "watts": 271.1, "j_per_tok": 1.866, "tok_s_per_100w": 53.59, "sm_mhz": 2731, "max_temp": 61, "psamples": 83, "label": "gpu0_cap400_c1_r2"}
+{"tokens": 1200, "sec": 8.45, "tok_s": 142.03, "watts": 273.0, "j_per_tok": 1.922, "tok_s_per_100w": 52.03, "sm_mhz": 2732, "max_temp": 62, "psamples": 85, "label": "gpu0_cap350_c1_r1"}
+{"tokens": 1200, "sec": 8.14, "tok_s": 147.49, "watts": 272.4, "j_per_tok": 1.847, "tok_s_per_100w": 54.14, "sm_mhz": 2731, "max_temp": 63, "psamples": 82, "label": "gpu0_cap350_c1_r2"}
+{"tokens": 1200, "sec": 8.77, "tok_s": 136.76, "watts": 272.9, "j_per_tok": 1.996, "tok_s_per_100w": 50.1, "sm_mhz": 2701, "max_temp": 64, "psamples": 88, "label": "gpu0_cap300_c1_r1"}
+{"tokens": 1200, "sec": 7.75, "tok_s": 154.89, "watts": 275.6, "j_per_tok": 1.779, "tok_s_per_100w": 56.2, "sm_mhz": 2694, "max_temp": 65, "psamples": 78, "label": "gpu0_cap300_c1_r2"}
+{"tokens": 1200, "sec": 23.78, "tok_s": 50.46, "watts": 274.5, "j_per_tok": 5.439, "tok_s_per_100w": 18.38, "sm_mhz": 2373, "max_temp": 70, "psamples": 238, "label": "gpu0_cap275_c1_r1"}
+{"tokens": 1200, "sec": 8.41, "tok_s": 142.64, "watts": 256.2, "j_per_tok": 1.796, "tok_s_per_100w": 55.68, "sm_mhz": 2583, "max_temp": 66, "psamples": 84, "label": "gpu0_cap275_c1_r2"}
+{"tokens": 1200, "sec": 8.31, "tok_s": 144.4, "watts": 228.5, "j_per_tok": 1.583, "tok_s_per_100w": 63.19, "sm_mhz": 2444, "max_temp": 64, "psamples": 83, "label": "gpu0_cap250_c1_r1"}
+{"tokens": 1200, "sec": 7.82, "tok_s": 153.49, "watts": 226.9, "j_per_tok": 1.478, "tok_s_per_100w": 67.65, "sm_mhz": 2440, "max_temp": 64, "psamples": 78, "label": "gpu0_cap250_c1_r2"}
+{"tokens": 1200, "sec": 8.72, "tok_s": 137.55, "watts": 211.7, "j_per_tok": 1.539, "tok_s_per_100w": 64.96, "sm_mhz": 2246, "max_temp": 62, "psamples": 87, "label": "gpu0_cap225_c1_r1"}
+{"tokens": 1200, "sec": 8.41, "tok_s": 142.64, "watts": 211.7, "j_per_tok": 1.484, "tok_s_per_100w": 67.37, "sm_mhz": 2246, "max_temp": 62, "psamples": 84, "label": "gpu0_cap225_c1_r2"}
+{"tokens": 1200, "sec": 8.57, "tok_s": 139.97, "watts": 186.2, "j_per_tok": 1.33, "tok_s_per_100w": 75.17, "sm_mhz": 1416, "max_temp": 61, "psamples": 86, "label": "gpu0_cap200_c1_r1"}
+{"tokens": 1200, "sec": 8.48, "tok_s": 141.59, "watts": 185.3, "j_per_tok": 1.309, "tok_s_per_100w": 76.4, "sm_mhz": 1485, "max_temp": 61, "psamples": 85, "label": "gpu0_cap200_c1_r2"}

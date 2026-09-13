@@ -1,0 +1,35 @@
+# Apply measured performance-per-watt power caps at boot.
+# Power limits reset on every reboot and every driver reload.
+#
+#   sudo cp gpu-power-caps.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now gpu-power-caps
+#
+# Edit the bus ids and watts for your machine. Each cap below sits at the
+# measured efficiency knee from bench/data/; below these, throughput falls
+# faster than power does. See docs/benchmarks.md.
+#
+#   01:00.0  RTX 4090    450 -> 250 W   (flat throughput down to 200 W)
+#   03:00.0  CMP 170HX   250 -> 150 W   (never drew more than 152 W)
+#   41:00.0  RTX 3090    350 -> 275 W   (falls off a cliff below this)
+#
+# Pinned by PCI bus id deliberately: nvidia-smi indices follow enumeration
+# order and can move when hardware changes.
+
+[Unit]
+Description=Apply measured power caps to the GPUs
+After=nvidia-persistenced.service
+# Ordering only. Deliberately no Wants=: do not pull in persistence mode,
+# which is a separate decision from power capping.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nvidia-smi -i 00000000:01:00.0 -pl 250
+ExecStart=/usr/bin/nvidia-smi -i 00000000:03:00.0 -pl 150
+ExecStart=/usr/bin/nvidia-smi -i 00000000:41:00.0 -pl 275
+ExecStop=/usr/bin/nvidia-smi -i 00000000:01:00.0 -pl 450
+ExecStop=/usr/bin/nvidia-smi -i 00000000:03:00.0 -pl 250
+ExecStop=/usr/bin/nvidia-smi -i 00000000:41:00.0 -pl 350
+
+[Install]
+WantedBy=multi-user.target
