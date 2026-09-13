@@ -36,29 +36,50 @@ The symptom that gives it away: you sample `nvidia-smi -i N` (which orders by
 bus) while loading a card CUDA chose by speed, and the power and clock readings
 belong to a completely different GPU than the one doing the work.
 
-## The card reads Gen1 x16 at idle
+## The card reads Gen1, or a narrow width
 
-That is normal power-state downtraining and affects every modern NVIDIA card,
-not just this one. It trains up on the first compute kernel.
+Three different causes, and they need telling apart.
 
-The 170HX is different in that it genuinely will not go past **Gen2 x8** even
-under full load. Distinguish the two with `nvidia-smi -q`, which separates the
-ends of the negotiation:
+**Idle downtraining** affects every modern NVIDIA card. It trains up on the
+first compute kernel. Harmless.
+
+**The 170HX's firmware Gen1 pin** is not downtraining: the card's CYA bits hold
+the link at Gen1 regardless of load. Only a patched driver
+([cmpunlocker](https://github.com/bayley/cmpunlocker)) clears them. If you have
+it installed, confirm it actually ran:
+
+```
+$ journalctl -b -k | grep _cmpRetrainGen2
+NVRM: ... PCIe retrain done (polls=0): LinkCtrlStat=0x10820040 speed=2 width=x8
+```
+
+No such line means no retrain, and you are on Gen1 whatever else is true.
+
+**Width** is physical. All stock CMP 170HX report `x4 (downgraded)` from an x16
+capability. Getting x8 or x16 requires a hardware modification to the board;
+this card has a capacitor mod that reaches x8. cmpunlocker retrains whatever
+lanes are present and cannot add any.
+
+`nvidia-smi -q` separates the ends of the negotiation, which is how you tell a
+firmware pin from a slot problem:
 
 ```
 PCIe Generation
     Max          : 2
     Current      : 2
-    Device Max   : 1
+    Device Max   : 1     <- advertised capability, untouched by the retrain
     Host Max     : 4
+Link Width
+    Max          : 16x
+    Current      : 8x
 ```
 
-`Device Max` below `Host Max` means the card is the limit, not the slot or a
-signal-integrity fallback. Check `Replays Since Reset` too: a nonzero and
+`Device Max: 1` alongside `Current: 2` is the signature of a successful
+software retrain, not a fault. Check `Replays Since Reset` too: a nonzero and
 climbing count would point at signal integrity, and ours reads 0.
 
-Measure it properly with [`bench/pcie_bw.py`](../bench/pcie_bw.py), which holds
-a compute kernel running so the card is in P0.
+Measure the result with [`bench/pcie_bw.py`](../bench/pcie_bw.py), and read its
+header first: it is easy to under-measure this by 2x.
 
 ## Serving one request at a time / terrible concurrency
 

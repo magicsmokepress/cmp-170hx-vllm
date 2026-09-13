@@ -81,18 +81,19 @@ client concurrency above `--max-num-seqs` buys nothing at all.
 
 ### Load rate is model-dependent, not just link-dependent
 
-The PCIe link caps host transfer at about 1.5 GB/s (see below), but that is an
-upper bound, not a prediction:
+The PCIe link caps host transfer at about 3.2 GB/s (see below). Neither model
+comes close to it:
 
 | model | size | page cache | load time | effective rate |
 |---|---|---|---|---|
 | Qwen3.8-27B W4A16 | 15.8 GB | warm | 9.13 s | 1.73 GB/s |
 | Qwen3-Next-80B W4A16 | 40.9 GB | 98% resident (`mincore`) | 68.07 s | 0.60 GB/s |
 
-The 27B loads at roughly the link ceiling. The 80B, with its page cache
-residency verified rather than assumed, loads at a third of that, so something
-other than PCIe dominates its load path. Do not derive an expected load time
-from the link speed alone; measure the model you actually serve.
+The 27B reaches 54% of the link ceiling and the 80B 19%, with the 80B's page
+cache residency verified rather than assumed. **Neither is link-bound**, so
+something in the loader dominates in both cases, and it dominates differently
+per model. Do not derive an expected load time from link speed; measure the
+model you actually serve.
 
 ## The 27B on the 170HX, head to head
 
@@ -183,20 +184,35 @@ argument against overclocking it (see [tuning.md](tuning.md)).
 
 ## PCIe host transfer
 
-With a matmul kernel held running in a background thread so the card is in P0:
+`bench/pcie_bw.py`, 512 MiB buffers, 20 iterations per direction.
 
-```
-H2D  1.53 GB/s
-D2H  1.51 GB/s
-link Gen2 x8, unchanged under load
-```
+| card | link | H2D uncontended | D2H uncontended | H2D contended |
+|---|---|---|---|---|
+| CMP 170HX | Gen2 x8 | **3.18 GB/s** | 3.12 GB/s | 2.50 GB/s |
+| RTX 3090 | Gen4 x16 | 24.90 GB/s | 22.11 GB/s | 14.57 GB/s |
 
-RTX 3090, same host, same test: 24.1 GB/s H2D, 23.7 GB/s D2H at Gen4 x16.
+3.18 GB/s is ~79% of Gen2 x8's 4 GB/s theoretical, a normal efficiency. The
+170HX is about 7.8x slower to feed than the 3090.
 
-If you measure this yourself, drive a compute kernel first. A pure DMA copy
-leaves the shaders idle, the card stays in a low power state, and you will
-measure the idle link and conclude the card cannot train up. That is a test
-artifact, not a finding.
+Note the link state this is measured at is **not stock**: Gen2 comes from
+cmpunlocker's software retrain and x8 from a hardware capacitor mod on this
+board. See [hardware.md](hardware.md#the-pcie-link-and-what-it-takes-to-make-it-usable).
+
+### How to get this measurement wrong
+
+An earlier version of this document reported 1.53 GB/s, less than half the real
+figure, from a script that made two mistakes at once:
+
+1. **It timed copies while a matmul was running.** The kernel was there to keep
+   the card in P0, which is genuinely necessary (a pure DMA copy does not wake
+   an idle GPU, and benchmarking that way measures the idle link). But leaving
+   it running costs about 20%. Warm the card, stop the kernel, then time.
+2. **It used 256 MiB buffers and 10 iterations.** Per-copy launch and
+   synchronisation overhead dominated. 512 MiB and 20 iterations is enough to
+   make it negligible.
+
+The current script reports both contended and uncontended figures, because a
+real serving workload is contended and a spec sheet is not.
 
 ## One card that does not fit: gpt-oss-120b
 

@@ -44,3 +44,9 @@ The 27B sweep carries nine runs at each of 250 W and 150 W because
 speculative-decoding acceptance varies with sampling: single runs at those two
 caps overlap, and only the medians separate. Three runs would have supported
 the wrong conclusion. Read medians, not individual rows.
+
+| `pcie_bw.txt` | 170HX + RTX 3090 | n/a | host transfer bandwidth, link state, and the cmpunlocker retrain log |
+
+The 170HX link state is not stock. Gen2 comes from cmpunlocker's software
+retrain and x8 from a hardware capacitor mod on this board; a stock card on a
+stock driver is Gen1 x4.

@@ -2,8 +2,19 @@
 
 ## Driver and CUDA
 
-Nothing special. The card is a standard GA100 to the driver; any recent
-NVIDIA driver that supports A100 supports it.
+For basic CUDA work, nothing special: the card is a standard GA100 to the
+driver, and any recent NVIDIA driver that supports an A100 supports it.
+
+**This host does not run a stock driver.** It runs
+[cmpunlocker](https://github.com/bayley/cmpunlocker), which patches the NVIDIA
+kernel modules and, among other things, retrains the PCIe link from the card's
+firmware-pinned Gen1 up to Gen2. That costs you Secure Boot (the patched
+modules are unsigned) and a rebuild hook on every driver update, and it is the
+reason the bandwidth figures in these docs are what they are. If you skip it,
+expect roughly half the host bandwidth. It is not required to serve a model.
+
+See [hardware.md](hardware.md#the-pcie-link-and-what-it-takes-to-make-it-usable)
+for what is stock, what is software, and what is a hardware modification.
 
 Tested on:
 

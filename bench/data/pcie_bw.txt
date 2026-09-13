@@ -1,0 +1,41 @@
+Host<->device PCIe bandwidth, bench/pcie_bw.py, 512 MiB buffers, 20 iterations.
+Measured 2026-09-13 on srv01.
+
+=== CMP 170HX (03:00.0) ===
+link: Gen2 x8   (NOT stock: Gen2 from cmpunlocker's software retrain,
+                 x8 from a hardware capacitor mod on this board)
+  contended    H2D: 2.50 GB/s     (matmul running on the card)
+  contended    D2H: 2.46 GB/s
+  uncontended  H2D: 3.18 GB/s     = 79% of Gen2 x8's 4 GB/s theoretical
+  uncontended  D2H: 3.12 GB/s
+
+=== RTX 3090 (42:00.0), same host, same script ===
+link: Gen4 x16
+  contended    H2D: 14.57 GB/s
+  contended    D2H: 13.54 GB/s
+  uncontended  H2D: 24.90 GB/s
+  uncontended  D2H: 22.11 GB/s
+
+170HX is 7.8x slower to feed than the 3090 (3.18 vs 24.90 uncontended).
+
+=== Superseded ===
+An earlier run of this repo reported 1.53 / 1.51 GB/s for the 170HX. That was
+wrong by 2x, from a script that timed copies while a matmul was running AND
+used 256 MiB buffers with 10 iterations, so per-copy overhead dominated.
+Both faults are fixed in the current bench/pcie_bw.py.
+
+=== Link state as reported ===
+$ nvidia-smi -q -i 1 | grep -A9 "GPU Link Info"
+    PCIe Generation
+        Max          : 2
+        Current      : 2
+        Device Max   : 1      <- advertised capability, untouched by the retrain
+        Host Max     : 4
+    Link Width
+        Max          : 16x
+        Current      : 8x
+
+$ journalctl -b -k | grep _cmpRetrainGen2
+NVRM: GPU3 _cmpRetrainGen2: CMPUNLOCK: PCIe pre: CFG0=0x800c4c00 LCTRL2=0x00140036 CYA0=0x068731b7
+NVRM: GPU3 _cmpRetrainGen2: CMPUNLOCK: PCIe root port LnkCtl2 @ 0x88: 0x0004 -> 0x0002
+NVRM: GPU3 _cmpRetrainGen2: CMPUNLOCK: PCIe retrain done (polls=0): LinkCtrlStat=0x10820040 speed=2 width=x8

@@ -22,7 +22,46 @@ built only for consumer Ampere/Ada will not have a kernel for it. Most
 mainstream builds (PyTorch, vLLM) do ship sm_80 because that is the A100, so
 in practice this is a non-issue, but check if you build anything yourself.
 
-## The PCIe link is the headline constraint
+## The PCIe link, and what it takes to make it usable
+
+This is the part of the card most write-ups get wrong, including an earlier
+version of this one. **The link you get out of the box is not the link
+measured here.**
+
+### Three different states
+
+| state | speed | width | notes |
+|---|---|---|---|
+| stock card, stock driver | Gen1 | x4 (from an x16 capability) | the card's CYA bits pin the link to Gen1 |
+| stock card, cmpunlocker | Gen2 | x4 | software retrain, no hardware change |
+| **this card** | **Gen2** | **x8** | cmpunlocker **plus** a hardware capacitor mod |
+| fully-wired card, cmpunlocker | Gen2 | x16 | upstream's logs show this; not reached here |
+
+The Gen1 pin is a firmware decision, not a physical limit.
+[cmpunlocker](https://github.com/bayley/cmpunlocker) clears the CYA bits inside
+its unlock window, selects Gen2 in `XP_CFG0` and `XP_LCTRL2`, sets the root
+port's target speed (both ends must agree), and triggers a directed speed
+change. It runs at every driver initialisation. On this host you can watch it
+happen:
+
+```
+$ journalctl -b -k | grep _cmpRetrainGen2
+NVRM: GPU3 _cmpRetrainGen2: CMPUNLOCK: PCIe pre: CFG0=0x800c4c00 LCTRL2=0x00140036 CYA0=0x068731b7
+NVRM: GPU3 _cmpRetrainGen2: CMPUNLOCK: PCIe root port LnkCtl2 @ 0x88: 0x0004 -> 0x0002
+NVRM: GPU3 _cmpRetrainGen2: CMPUNLOCK: PCIe retrain done (polls=0): LinkCtrlStat=0x10820040 speed=2 width=x8
+```
+
+The **width** is a separate problem with a separate fix. cmpunlocker retrains
+whatever lanes are physically present; upstream's own log shows `width=x16` on
+a card where all of them are. This card reaches x8 because of a capacitor
+modification to the board. x16 was not achievable on it.
+
+So if you are pricing one of these: budget for the software unlock (free, but
+it means running a patched driver with Secure Boot off) and understand that
+the link width depends on a hardware modification you may or may not want to
+do.
+
+### What it reports
 
 ```
 $ nvidia-smi -q -i <idx> | grep -A9 "GPU Link Info"
@@ -30,38 +69,55 @@ $ nvidia-smi -q -i <idx> | grep -A9 "GPU Link Info"
         Max                  : 2
         Current              : 2
         Device Current       : 2
-        Device Max           : 1
+        Device Max           : 1     <- the card still advertises Gen1
         Host Max             : 4
     Link Width
         Max                  : 16x
         Current              : 8x
 ```
 
-The host slot is Gen4 x16. The card negotiates Gen2 x8 and stays there.
+`Device Max: 1` with `Current: 2` is the signature of the software retrain: the
+device's advertised capability is untouched, the live link is not. `Link Width
+Max: 16x` is the capability, `8x` is what this board's lanes support.
 
-Measured, with a matmul kernel held running in a background thread so the card
-cannot be sitting in a low power state (a pure DMA copy does **not** wake the
-GPU, and benchmarking an idle card measures the idle link):
+### What it measures
 
-```
-H2D: 1.53 GB/s
-D2H: 1.51 GB/s
-```
+`bench/pcie_bw.py`, 512 MiB buffers, 20 iterations:
 
-An RTX 3090 in the same chassis measures 24.1 GB/s H2D on the same test. The
-170HX is roughly **16x slower to feed**.
+| | H2D | D2H |
+|---|---|---|
+| uncontended | **3.18 GB/s** | 3.12 GB/s |
+| contended (matmul running) | 2.50 GB/s | 2.46 GB/s |
 
-What this costs you in practice:
+3.18 GB/s is about 79% of Gen2 x8's 4 GB/s theoretical, which is a normal
+efficiency. An RTX 3090 in the same chassis, measured with the same script,
+does 24.90 GB/s at Gen4 x16. So the 170HX is roughly **7.8x slower to feed**,
+not the 16x an earlier version of this document claimed from a broken
+measurement.
+
+Two ways to get this wrong, both of which we did:
+
+- **Measuring with a compute kernel running** costs about 20%. You need one to
+  warm an idle card into P0, but stop it before timing the copies.
+- **Buffers under about 512 MiB** let per-copy overhead dominate. At 256 MiB
+  with 10 iterations this same card read 1.53 GB/s, half the real figure.
+
+### What it costs you
 
 | operation | effect |
 |---|---|
-| Loading a 41 GB W4A16 model | 68 s warm from page cache, up to 130 s cold |
-| systemd unit startup | set `TimeoutStartSec=900` or it gets killed mid-load |
+| Model load | **not link-bound** (see below) |
+| systemd unit startup | still set `TimeoutStartSec=900`, for other reasons |
 | Tensor parallel across 2 cards | avoid; one model per card |
 | CPU offload / layer streaming | not viable, fit in VRAM |
 | Inference itself | **unaffected**, weights and KV live in VRAM |
 
-The last row is why the card is still worth using. Once loaded, the PCIe link
+Model loading is slower than the link, not limited by it. The 80B loads 40.9 GB
+at 0.60 GB/s and the 27B loads 15.8 GB at 1.73 GB/s, against a 3.18 GB/s
+ceiling, so something in the loader dominates in both cases. See
+[benchmarks.md](benchmarks.md#load-rate-is-model-dependent-not-just-link-dependent).
+
+The last row is why the card is worth using at all. Once loaded, the link
 carries only prompts and tokens, which are kilobytes.
 
 ## Power
@@ -139,7 +195,8 @@ reason instead.
 - No ECC (`ecc.mode.current` reads `N/A`).
 - VBIOS-locked clocks: SM tops out at 1410 MHz, memory at 1458 MHz (NDIV 54,
   the only supported value). See [tuning.md](tuning.md).
-- PCIe Gen2 x8 as above, against the A100's Gen4 x16.
+- PCIe pinned to Gen1 x4 in firmware, against the A100's Gen4 x16. Gen2 needs
+  a patched driver and any width above x4 needs a hardware mod; see above.
 
 What you keep: the GA100 die, 64 GB of HBM2e, and ~1.3 TB/s of real measured
 bandwidth.

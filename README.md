@@ -4,8 +4,13 @@
 
 The NVIDIA CMP 170HX is a cryptocurrency mining card built on the GA100 die,
 the same silicon as the A100. It has 64 GB of HBM2e at 1.5 TB/s. It has no
-display outputs, no video encoders, a PCIe link hobbled to Gen2 x8, and a
-locked VBIOS. Nobody wants it. That is the point.
+display outputs, no video encoders, a PCIe link pinned to Gen1 x4 in firmware,
+and a locked VBIOS. Nobody wants it. That is the point.
+
+**Read [the PCIe section](docs/hardware.md#the-pcie-link-and-what-it-takes-to-make-it-usable)
+before you buy one.** The numbers here come from a card running a patched
+driver that retrains the link to Gen2, on a board with a hardware capacitor
+modification that widens it to x8. Out of the box you get neither.
 
 This repository documents a working, measured setup: what the card actually
 does under vLLM, the configuration that gets there, the traps that cost time,
@@ -108,34 +113,27 @@ actually restricts. Measure your own workload before capping.
 
 ## What the card is bad at
 
-**Getting data in and out.** The PCIe link is the defining constraint:
+**Getting data in and out.** Even modified, the link is the weak point:
 
-```
-$ nvidia-smi -q -i <170hx> | grep -A6 "PCIe Generation"
-    PCIe Generation
-        Max          : 2
-        Current      : 2
-        Device Max   : 1     <- the card advertises Gen1
-        Host Max     : 4
-    Link Width
-        Max          : 16x
-        Current      : 8x
-```
+| | this card (Gen2 x8) | RTX 3090 (Gen4 x16) |
+|---|---|---|
+| H2D, uncontended | 3.18 GB/s | 24.90 GB/s |
+| D2H, uncontended | 3.12 GB/s | 22.11 GB/s |
 
-Measured host transfer with a compute kernel held running so the card cannot
-downclock: **1.53 GB/s H2D, 1.51 GB/s D2H.** A 3090 in the same chassis does
-24 GB/s. The link never trains higher, at any load.
+Same script, same chassis, same day: about **7.8x slower to feed**. And that is
+the modified card. Stock, the link is Gen1 x4, roughly a quarter of the lanes
+and half the clock.
 
 Consequences:
 
-- Loading 41 GB of weights takes **68 seconds** with 98% of the file already
-  in page cache (verified with `mincore`), and up to 130 s cold from disk.
-  Budget two minutes for a service restart, and set
-  `TimeoutStartSec=900` in systemd or the unit will be killed mid-load.
 - Tensor parallelism across two of these would be miserable. Use one card
   per model.
 - Anything that streams tensors from host RAM per token (CPU offload,
   layer swapping) is off the table. Fit the model in VRAM or pick another card.
+- Model loading is slow, though **not because of the link**: both models here
+  load well under the link ceiling, so the loader dominates.
+- Inference itself is unaffected. Once loaded, the link carries only prompts
+  and tokens.
 
 **Compute, relatively.** llama.cpp extracts only ~728 GB/s effective against
 the 1325 GB/s the memory can deliver, so for that workload the card is
@@ -170,9 +168,10 @@ expect hotter under sustained load.
 | | |
 |---|---|
 | Card | CMP 170HX, `10de:20c2`, 64 GB HBM2e, VBIOS 92.00.67.00.01, compute capability 8.0 |
+| Card mods | capacitor mod for PCIe x8; [cmpunlocker](https://github.com/bayley/cmpunlocker) patched driver for the Gen2 retrain |
 | Host | AMD Ryzen Threadripper PRO 3945WX, 128 GB DDR4 ECC |
 | OS | Ubuntu 26.04 LTS, kernel 7.0 |
-| Driver | 610.43.02 |
+| Driver | 610.43.02, patched by cmpunlocker (runs at every driver init) |
 | Stack | vLLM 0.27.1, torch 2.13.0+cu130, CUDA 13.0 |
 | Also in the box | RTX 4090, 2x RTX 3090 (used as comparison baselines) |
 
