@@ -45,9 +45,10 @@ ExecStart=/path/to/.venv-vllm/bin/vllm serve /path/to/qwen3next-w4a16 \
   --host 0.0.0.0 \
   --port 8000
 
-# 43 GB of weights over a Gen2 x8 link takes 79-130 s to load, before vLLM
-# even starts profiling. A default 90 s start timeout kills it mid-load and
-# looks like a crash. This is the single most common 170HX setup failure.
+# 41 GB of weights takes 68 s to load with the file already in page cache and
+# up to 130 s cold, and the service needs ~104 s total before it answers. A
+# default 90 s start timeout kills it mid-load and looks like a crash. This is
+# the single most common 170HX setup failure.
 TimeoutStartSec=900
 TimeoutStopSec=180
 

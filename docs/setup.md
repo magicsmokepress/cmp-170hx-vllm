@@ -73,8 +73,9 @@ Please make sure to set `CUDA_DEVICE_ORDER=PCI_BUS_ID`
 
 ### 2. Give the loader time
 
-43 GB over a 1.5 GB/s link takes 79-130 seconds before vLLM even starts
-profiling. Any supervisor with a default 90-second start timeout will kill it
+41 GB takes 68 seconds to load with the weights already in page cache, and up
+to 130 s cold from disk, before vLLM even starts profiling. Total time to a
+listening socket was 104 s. Any supervisor with a default 90-second start timeout will kill it
 mid-load and look like a crash. In systemd:
 
 ```ini

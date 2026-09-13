@@ -30,3 +30,17 @@ Single-stream points carry roughly 5% run-to-run spread: these were live
 services and real traffic landed mid-benchmark. One 275 W point on the 4090 was
 discarded as contended. Conclusions rest on the shape of the curve across eight
 cap values, not on any single pair.
+
+## Added 2026-09-13
+
+| file | card | model | what |
+|---|---|---|---|
+| `27b_170hx_capsweep_c1.jsonl` | CMP 170HX | Qwen3.8-27B W4A16 + DFlash2 | power sweep 250-125 W, single stream, 27 runs |
+| `27b_170hx_conc.jsonl` | CMP 170HX | Qwen3.8-27B W4A16 + DFlash2 | concurrency 1/4/8 at the 150 W cap |
+| `80b_170hx_conc.jsonl` | CMP 170HX | Qwen3-Next-80B W4A16 | concurrency 1/4/8 at the 150 W cap |
+| `longctx_170hx.txt` | CMP 170HX | both | 24k-context decode, 4-turn shared-prefix TTFT, prefill, load times |
+
+The 27B sweep carries nine runs at each of 250 W and 150 W because
+speculative-decoding acceptance varies with sampling: single runs at those two
+caps overlap, and only the medians separate. Three runs would have supported
+the wrong conclusion. Read medians, not individual rows.

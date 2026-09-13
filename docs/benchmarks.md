@@ -35,7 +35,7 @@ prompts ~9-10k tokens of freshly randomised words.
 
 | model | GPU | prefill tok/s | decode tok/s (prose) |
 |---|---|---|---|
-| **Qwen3-Next-80B-A3B W4A16** | **170HX** | **7400-7950** | **121** |
+| **Qwen3-Next-80B-A3B W4A16** | **170HX** | **6800-7950** | **112-121** |
 | Qwen3.8-27B W4A16 + spec decode | RTX 4090 | 2070 | 161 |
 | Cosmos-Reason2-8B fp8 | RTX 3090 | 3400 | 80 |
 
@@ -50,10 +50,49 @@ work the big model on the slow card is the faster server end to end.
 
 ## Both models on the same card
 
-A side-by-side of the 27B and the 80B, both on the 170HX, is in the
-[README](../README.md#headline-numbers). The short version: the 27B decodes 26%
-faster (152 vs 121 tok/s) and the 80B prefills at nearly 8000 tok/s, so the
-right choice depends on prompt shape rather than parameter count.
+Measured 2026-09-13, same harness, same day, both at the 150 W cap.
+
+| | Qwen3.8-27B + DFlash2 | Qwen3-Next-80B-A3B |
+|---|---|---|
+| decode, single stream | 127 tok/s | 116 tok/s |
+| decode, 4 concurrent | 204 tok/s | 352 tok/s |
+| decode, 8 concurrent | 235 tok/s | 352 tok/s (saturated at 4 slots) |
+| decode at 24k context | 83 tok/s | 112 tok/s |
+| prefill, ~8.9k tokens | 1768 tok/s | 6800-7950 tok/s |
+| TTFT, 24k prefix, cold | 14.3 s | 3.4 s |
+| TTFT, 24k prefix, warm | 0.56 s | 0.14 s |
+| J/token, single stream | 1.12 | 1.18 |
+| J/token, 8 concurrent | 0.63 | 0.41 |
+| weight load, warm | 9.1 s for 15.8 GB | 68 s for 40.9 GB |
+
+Raw data: `bench/data/27b_170hx_conc.jsonl`, `bench/data/80b_170hx_conc.jsonl`,
+`bench/data/longctx_170hx.txt`.
+
+The 80B wins everywhere except short-prompt single-stream decode, where the 27B
+leads by 9%. It prefills nearly 4x faster, decodes 35% faster at 24k context,
+and reaches 3x the concurrent throughput. The reason is that the 80B is an MoE
+with roughly 3B active parameters, so it does less work per token than a 27B
+dense model. On this card, the bigger model is the faster server.
+
+The concurrency rows also show a configuration effect worth copying: the 80B is
+run with `--max-num-seqs 4`, and its C4 and C8 numbers are identical within
+noise (351.6 and 352.4 tok/s). Requests past the slot count queue. Raising
+client concurrency above `--max-num-seqs` buys nothing at all.
+
+### Load rate is model-dependent, not just link-dependent
+
+The PCIe link caps host transfer at about 1.5 GB/s (see below), but that is an
+upper bound, not a prediction:
+
+| model | size | page cache | load time | effective rate |
+|---|---|---|---|---|
+| Qwen3.8-27B W4A16 | 15.8 GB | warm | 9.13 s | 1.73 GB/s |
+| Qwen3-Next-80B W4A16 | 40.9 GB | 98% resident (`mincore`) | 68.07 s | 0.60 GB/s |
+
+The 27B loads at roughly the link ceiling. The 80B, with its page cache
+residency verified rather than assumed, loads at a third of that, so something
+other than PCIe dominates its load path. Do not derive an expected load time
+from the link speed alone; measure the model you actually serve.
 
 ## The 27B on the 170HX, head to head
 
@@ -95,6 +134,14 @@ serving the 80B.
 Throughput is flat from 250 W down to 150 W. The card never approached its cap,
 so the cap was never the limiting factor. Only at 125 W does the SM clock
 finally drop enough to cost throughput, and even then only 7%.
+
+**This result does not generalise to every model.** The same sweep against the
+27B with speculative decoding has a completely different shape: the card draws
+194 W, the SM clock tracks the cap all the way down, and 150 W costs about 7%
+of throughput at short context and 16% at 24k. Speculative decoding verifies a
+block of drafts in one pass, which is compute-heavy, and compute is what a cap
+restricts. Both sweeps are tabulated in
+[hardware.md](hardware.md#power).
 
 ### Cross-card efficiency
 

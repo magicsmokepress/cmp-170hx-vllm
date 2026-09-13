@@ -9,7 +9,9 @@
 # faster than power does. See docs/benchmarks.md.
 #
 #   01:00.0  RTX 4090    450 -> 250 W   (flat throughput down to 200 W)
-#   03:00.0  CMP 170HX   250 -> 150 W   (never drew more than 152 W)
+#   03:00.0  CMP 170HX   250 -> 150 W   (correct for a memory-bound MoE, which
+#                                        never drew more than 152 W; a speculative
+#                                        decoding workload wants 200 W instead)
 #   41:00.0  RTX 3090    350 -> 275 W   (falls off a cliff below this)
 #
 # Pinned by PCI bus id deliberately: nvidia-smi indices follow enumeration

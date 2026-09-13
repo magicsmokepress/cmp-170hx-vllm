@@ -1,0 +1,3 @@
+{"tokens": 400, "sec": 3.15, "tok_s": 126.99, "watts": 142.8, "j_per_tok": 1.124, "tok_s_per_100w": 88.94, "sm_mhz": 1191, "max_temp": 50, "psamples": 32, "label": "27b_170hx_cap150_c1"}
+{"tokens": 1600, "sec": 7.83, "tok_s": 204.29, "watts": 146.7, "j_per_tok": 0.718, "tok_s_per_100w": 139.27, "sm_mhz": 1154, "max_temp": 52, "psamples": 78, "label": "27b_170hx_cap150_c4"}
+{"tokens": 3200, "sec": 13.64, "tok_s": 234.55, "watts": 147.4, "j_per_tok": 0.629, "tok_s_per_100w": 159.07, "sm_mhz": 1139, "max_temp": 54, "psamples": 136, "label": "27b_170hx_cap150_c8"}

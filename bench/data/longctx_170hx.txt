@@ -1,0 +1,33 @@
+Long-context and shared-prefix measurements on the CMP 170HX, 2026-09-13.
+Scripts: mytests/decode_at_ctx.py and mytests/prefix_turns.py from
+https://github.com/syv-ai/qwen38-27b-rtx3090 (24k-token seeded document,
+enable_thinking=false, 500-token generation).
+
+=== Qwen3-Next-80B-A3B W4A16, :8000, 150 W cap ===
+decode at 24k context   rep0 ttft=3.39s  decode=111.9 tok/s   (prompt 22968)
+                        rep1 ttft=0.14s  decode=111.8 tok/s   (prefix cache hit)
+4-turn shared prefix    turn1 TTFT 3.39s   answer 8768  correct
+                        turn2 TTFT 0.14s   answer 8692  correct
+                        turn3 TTFT 0.14s   answer 265   expected 266  WRONG
+                        turn4 TTFT 0.14s   answer 9572  correct
+
+=== Qwen3.8-27B W4A16 + DFlash2 (15 draft tokens), :18020 ===
+250 W cap, decode at 24k  rep0 ttft=11.31s decode=101.6 tok/s  (prompt 23238)
+                          rep1 ttft=0.44s  decode=96.0 tok/s
+150 W cap, decode at 24k  rep0 ttft=0.53s  decode=81.5 tok/s
+                          rep1 ttft=0.52s  decode=85.3 tok/s
+150 W cap, 4-turn prefix  turn1 TTFT 14.26s  answer 8768  correct
+                          turn2 TTFT 0.56s   answer 8692  correct
+                          turn3 TTFT 0.58s   answer 266   correct
+                          turn4 TTFT 0.60s   answer 9572  correct
+
+The 250 W 24k figures reproduce the 2026-08-23 measurements of 102 tok/s and
+11.8 s cold TTFT, which is the cross-check that the rig is unchanged.
+
+=== Prefill, /v1/completions, freshly randomised ~8.9k-token prompt ===
+27B on the 170HX, 150 W   1764 / 1773 / 1768 tok/s   (bench/prefill.py)
+27B on an RTX 4090, 250 W 2111 / 2119 tok/s          (reproduces the 2070 baseline)
+
+=== Weight load time, page-cache residency verified with mincore ===
+80B  40.9 GB, 98% resident  ->  68.07 s  = 0.60 GB/s   (104 s total to ready)
+27B  15.8 GB, warm          ->   9.13 s  = 1.73 GB/s   (at the PCIe ceiling)

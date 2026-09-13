@@ -55,7 +55,7 @@ What this costs you in practice:
 
 | operation | effect |
 |---|---|
-| Loading a 43 GB W4A16 model | 79-130 s, even warm from page cache |
+| Loading a 41 GB W4A16 model | 68 s warm from page cache, up to 130 s cold |
 | systemd unit startup | set `TimeoutStartSec=900` or it gets killed mid-load |
 | Tensor parallel across 2 cards | avoid; one model per card |
 | CPU offload / layer streaming | not viable, fit in VRAM |
@@ -66,9 +66,21 @@ carries only prompts and tokens, which are kilobytes.
 
 ## Power
 
-Stock limit 250 W. Under sustained LLM serving it never exceeded **152 W**.
+Stock limit 250 W. **Whether the card approaches it depends entirely on the
+workload**, and this is the one place where a single number would mislead you:
 
-Swept caps from 250 W down to 125 W (raw data in `bench/data/170hx_c1.jsonl`):
+- Serving Qwen3-Next-80B (MoE, ~3B active), it never exceeded **152 W**.
+- Serving Qwen3.8-27B with DFlash2 speculative decoding, it draws **194 W**.
+
+Speculative decoding verifies a block of draft tokens in one pass, which is
+compute-heavy, and compute is what a power cap restricts. A memory-bound
+decode workload does not notice the cap; a speculative one does.
+
+Swept caps from 250 W down to 125 W against both models. Raw data in
+`bench/data/170hx_c1.jsonl` (80B) and `bench/data/27b_170hx_capsweep_c1.jsonl`
+(27B).
+
+**Qwen3-Next-80B, memory-bound, two reps per cap:**
 
 | cap | tok/s | draw | J/token | SM clock |
 |---|---|---|---|---|
@@ -78,10 +90,31 @@ Swept caps from 250 W down to 125 W (raw data in `bench/data/170hx_c1.jsonl`):
 | 150 W | 116.4 | 146 W | 1.25 | 1380 MHz |
 | 125 W | 109.3 | 122 W | 1.12 | 1271 MHz |
 
-Flat from 250 W to 150 W. We set **150 W** purely to bound the worst case; it
-costs nothing. 125 W saves a further 23 W for a 7% throughput loss, which was
-not judged worth it, though it is the efficiency optimum if you care more about
-watts than latency.
+Flat from 250 W to 150 W, because the card never got near the cap.
+
+**Qwen3.8-27B with DFlash2 speculative decoding, medians (n per row):**
+
+| cap | median tok/s | range | draw | SM clock |
+|---|---|---|---|---|
+| 250 W | 137.0 (n=9) | 121.6-156.1 | 194 W | 1382 MHz |
+| 200 W | 133.7 (n=3) | 128.2-135.4 | 188 W | 1349 MHz |
+| 175 W | 128.5 (n=3) | 120.5-137.2 | 166 W | 1277 MHz |
+| 150 W | 127.1 (n=9) | 108.8-136.2 | 143 W | 1178 MHz |
+| 125 W | 114.6 (n=3) | 110.9-120.2 | 121 W | 1005 MHz |
+
+A different shape entirely. The card draws 194 W when allowed, the SM clock
+tracks the cap all the way down, and 250 W to 150 W costs about 7% of median
+throughput for 50 W. At 24k context the same cut costs more, roughly 16% (101.6
+and 96.0 tok/s at 250 W against 81.5 and 85.3 at 150 W).
+
+Note the ranges: individual runs overlap heavily between caps, because
+speculative-decoding acceptance varies with sampling. Nine repetitions
+separate 250 W from 150 W; three would not have. If you sweep this workload,
+take medians over many runs.
+
+**We set 150 W** on this host because the 80B is what it serves. That choice
+would be wrong for a machine running the 27B, where 200 W is the knee. 125 W
+is the efficiency optimum for both, if you care more about watts than latency.
 
 Apply at boot with [`configs/gpu-power-caps.service`](../configs/gpu-power-caps.service).
 Power limits reset on reboot and on every driver reload.

@@ -18,59 +18,68 @@ the raw JSONL are in [`bench/`](bench/) so you can check the arithmetic.
 
 ## Headline numbers
 
-Two models, both on one 170HX, both under vLLM. The 27B is the fast one; the
-80B is the one that only fits because the card has 64 GB.
+Two models, both on one 170HX, both under vLLM, both re-measured on the same
+day with the same harness. The 27B is the fast one; the 80B is the one that
+only fits because the card has 64 GB.
 
 | | **Qwen3.8-27B** W4A16 + DFlash2 | **Qwen3-Next-80B-A3B** W4A16 |
 |---|---|---|
 | architecture | 27B dense | 80B MoE, ~3B active |
-| weights on disk | 22 GB + 1.8 GB drafter | 41 GB |
-| **decode, single stream** | **152 tok/s** | **121 tok/s** |
-| **decode at 24k context** | **102 tok/s** | not measured |
-| **prefill (~10k tokens)** | not measured on this card | **7400-7950 tok/s** |
-| concurrency 8, end to end | 278 tok/s | not measured (4 slots) |
-| TTFT, 24k prefix, cold | 11.8 s | not measured |
-| TTFT, 24k prefix, warm | 0.49 s | not measured |
-| power under load | 245 W (at a 250 W cap) | 143-151 W (at a 150 W cap) |
-| efficiency | not measured | 1.22 J/token |
-| temperature | 72 C | 52-59 C |
-| context served | 56k, 4 slots | 64k, 4 slots |
-| VRAM left over | ~40 GB | ~20 GB |
-| measured | 2026-08-23 | 2026-09-09 / 2026-09-12 |
+| weights on disk | 15.8 GB | 40.9 GB |
+| **decode, single stream** | **127 tok/s** | **116 tok/s** |
+| **decode at 24k context** | **83 tok/s** | **112 tok/s** |
+| **prefill (~8.9k tokens)** | **1768 tok/s** | **6800-7950 tok/s** |
+| decode, 4 concurrent | 204 tok/s | 352 tok/s |
+| decode, 8 concurrent | 235 tok/s | 352 tok/s (4 slots, saturated) |
+| TTFT, 24k prefix, cold | 14.3 s | 3.4 s |
+| TTFT, 24k prefix, warm | 0.56 s | 0.14 s |
+| efficiency, single stream | 1.12 J/token | 1.18 J/token |
+| efficiency, 8 concurrent | 0.63 J/token | 0.41 J/token |
+| power drawn | 143 W (capped), 194 W uncapped | 137-145 W, never hits the cap |
+| temperature | 50-56 C | 49-51 C |
+| weight load time | 9.1 s (1.73 GB/s) | 68 s (0.60 GB/s) |
+| KV cache | 57.7k tokens at `--gpu-memory-utilization 0.65` | 242.5k tokens at 0.75 |
+| 4-turn recall accuracy | 4/4 | 3/4 |
 
-Empty cells are honestly empty: the two models were benchmarked at different
-times for different reasons, and neither run covered the other's axes. The
-power figures are not comparable either: the 27B run predates the power sweep
-that set the 150 W cap, so it was free to draw 245 W. Do not read the power
-rows as a model-to-model comparison.
+All rows measured 2026-09-13 at the 150 W cap unless noted, so the two columns
+are directly comparable. The 27B's "uncapped" power figure is from the cap
+sweep below.
 
 ### What the table says
 
-**The 27B decodes 26% faster; the 80B prefills.** For short prompts and chatty
-turns the 27B wins. For long single-shot work, a document to summarise or a
-large context to answer over, the 80B is the faster server end to end, because
-an MoE with ~3B active parameters prefills at nearly 8000 tok/s. Pick by prompt
-shape, not by parameter count.
+**The 80B wins almost everywhere except short-prompt decode.** It prefills
+nearly 4x faster, decodes 35% faster at 24k context, hits 3x the concurrent
+throughput, and reaches a cold 24k prompt in 3.4 s against the 27B's 14.3 s.
+The 27B's advantage is a narrow 9% on single-stream short-prompt decode.
 
-**Neither number is the card's ceiling.** Both are single-stream. The 170HX has
-bandwidth and VRAM to spare in both configurations, and the 27B at concurrency
-8 more than doubles to 278 tok/s.
+That is not the ranking most people expect from "27B vs 80B", and the reason is
+architectural: the 80B is an MoE with ~3B active parameters, so it does far
+less work per token than a 27B dense model, while still getting the quality of
+a much larger network. On this card the big model is the fast model.
 
-**The 27B's decode rate depends on speculative decoding accepting drafts.** On
-trivially predictable output the same stack measures 364 tok/s; on real prose
-it settles near 152-161. Any benchmark of this model using a repetitive prompt
-overstates it by more than 2x. The 80B has no drafter, so its 121 tok/s has no
-such caveat.
+**Concurrency is where the card earns its keep.** Both models roughly triple
+their throughput from 1 to 8 concurrent requests, and efficiency improves
+correspondingly: the 80B goes from 1.18 to 0.41 J/token. The 80B saturates at
+352 tok/s because it is configured with `--max-num-seqs 4`; raising
+concurrency past the slot count buys exactly nothing, which the C4 and C8 rows
+show precisely.
+
+**The 27B's decode rate is unusually noisy.** Six repetitions at a fixed cap
+spread from 109 to 136 tok/s. That spread is the speculative-decoding
+acceptance rate moving with sampling, not measurement error, and it is why the
+27B needs medians over many runs where the 80B does not. On trivially
+predictable output the same stack reaches 364 tok/s, so any benchmark of this
+model using a repetitive prompt overstates it by more than 2x.
+
+**Recall was not equal.** Asked four questions against a 24k-token document,
+the 27B answered 4/4 correctly and the 80B miscounted the paragraphs (265
+against 266). One probe is not an evaluation, but it is a reminder that these
+throughput numbers say nothing about quality.
 
 For comparison on the same host and harness: an RTX 4090 runs at 1.82 J/token
-and an RTX 3090 at 4.11 J/token, against the 170HX's 1.22. The 170HX is the
-most efficient card in the machine by a wide margin, and the only one that can
-hold an 80B model at all.
-
-The same 27B stack on other cards, so the card is the only variable: 133-135
-tok/s on a 3090, 157-163 on a 4090, against the 170HX's 152. At 24k context it
-is 88 on the 3090 against the 170HX's 102. Full three-way table in
-[docs/benchmarks.md](docs/benchmarks.md#the-27b-on-the-170hx-head-to-head).
+and an RTX 3090 at 4.11 J/token, against the 170HX's 1.12-1.18. The 170HX is
+the most efficient card in the machine by a wide margin, and the only one that
+can hold an 80B model at all.
 
 Full detail and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
@@ -86,8 +95,16 @@ left over.
 1493 GB/s theoretical at its clock. Single-stream LLM decode is
 bandwidth-bound, and this card has A100-class bandwidth.
 
-**Performance per watt.** It never drew more than 152 W against its 250 W
-stock cap. Capping it to 150 W costs nothing measurable.
+**Performance per watt.** 1.12-1.18 J/token single-stream, and 0.41 J/token
+at concurrency 8. The best in the machine, against 1.82 for a 4090 and 4.11
+for a 3090.
+
+Whether you can cap it for free depends on the workload. Serving the 80B it
+never drew more than 152 W against a 250 W cap, so a 150 W cap costs nothing.
+Serving the 27B with speculative decoding it draws 194 W and a 150 W cap costs
+about 7% of single-stream throughput and 16% at 24k context. Speculative
+decoding adds a compute-heavy verify step, and compute is the one thing a cap
+actually restricts. Measure your own workload before capping.
 
 ## What the card is bad at
 
@@ -111,7 +128,8 @@ downclock: **1.53 GB/s H2D, 1.51 GB/s D2H.** A 3090 in the same chassis does
 
 Consequences:
 
-- Loading 43 GB of weights takes **79-130 seconds**, even from page cache.
+- Loading 41 GB of weights takes **68 seconds** with 98% of the file already
+  in page cache (verified with `mincore`), and up to 130 s cold from disk.
   Budget two minutes for a service restart, and set
   `TimeoutStartSec=900` in systemd or the unit will be killed mid-load.
 - Tensor parallelism across two of these would be miserable. Use one card

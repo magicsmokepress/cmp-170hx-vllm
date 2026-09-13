@@ -2,9 +2,10 @@
 
 ## "vLLM crashes on startup" / the unit keeps restarting
 
-Almost always the start timeout. 43 GB over a Gen2 x8 link takes **79-130
-seconds** to load before vLLM begins profiling. A default 90-second timeout
-kills it mid-load. Set `TimeoutStartSec=900`.
+Almost always the start timeout. 41 GB of W4A16 weights take **68 seconds** to
+load even with the file already in page cache, up to 130 s cold, and the
+service needs **104 seconds** total before it answers. A default 90-second
+timeout kills it mid-load. Set `TimeoutStartSec=900`.
 
 Confirm by looking for the loader line in the journal:
 
