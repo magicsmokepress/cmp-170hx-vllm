@@ -50,3 +50,20 @@ the wrong conclusion. Read medians, not individual rows.
 The 170HX link state is not stock. Gen2 comes from cmpunlocker's software
 retrain and x8 from a hardware capacitor mod on this board; a stock card on a
 stock driver is Gen1 x4.
+
+## Ornith-1.5-35B-A3B, added 2026-09-13
+
+Same card, same harness, same 150 W cap as the Qwen3-Next-80B figures above,
+so the two compare directly.
+
+| file | what |
+|---|---|
+| `ornith35b_170hx.jsonl` | decode and power at concurrency 1/4/8 across five configurations: llama.cpp Q8_0, llama.cpp Q4_K_M, vLLM FP8, vLLM FP8 + MTP k=2, vLLM FP8 + MTP k=1 with `--max-num-batched-tokens 8192`. The `label` field names the configuration |
+| `ornith35b_longctx.txt` | prefill, 24k-context decode, shared-prefix TTFT and recall, the MTP findings, and the reasoning budget findings, with setup notes and caveats |
+| `ornith35b_reasoning_budget.jsonl` | 180 requests from `../reasoning_budget.py`: reasoning tokens, answer tokens, finish reason, empty answers and correctness under unbounded thinking, thinking disabled, three `thinking_token_budget` values, and a `max_tokens` cap |
+
+Read the caveats in `ornith35b_longctx.txt` before quoting these. The
+llama.cpp and vLLM rows differ by engine as well as quantization, and the
+engine accounts for most of the gap. MTP helps single-stream decode but costs
+about 40% at long context. The reasoning budget test uses short single-turn
+prompts and says nothing about long agentic tasks.

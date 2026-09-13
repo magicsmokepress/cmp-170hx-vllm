@@ -1,0 +1,202 @@
+Ornith-1.5-35B-A3B on the CMP 170HX, measured 2026-09-13, 150 W cap.
+Engine: llama.cpp build 929d47a (2026-08-20), arch qwen35moe, --parallel 8,
+--ctx-size 262144 (32k per slot), --flash-attn on. NOT vLLM: see the caveat.
+
+Model: ornith-ai/Ornith-1.5-35B-A3B-GGUF
+  Q8_0    35.21 GiB   (40.7 GiB resident with KV)
+  Q4_K_M  20.22 GiB
+  mmproj   0.84 GiB   (vision, not exercised here)
+
+llama.cpp ignores the checkpoint's MTP head:
+  "model has unused tensor blk.40.nextn.* -- ignoring"
+so there is NO speculative decoding in these numbers, though the weights ship
+one. vLLM registers Qwen3_5MoeMTP and would use it.
+
+=== Prefill, ~8.9k freshly randomised tokens (bench/prefill.py) ===
+Q8_0    1959 / 2333 / 2339 tok/s
+Q4_K_M  1967 / 2323 / 2333 tok/s
+(rep0 is consistently low in both: first-touch effects, take reps 1-2)
+
+=== 24k-context decode (mytests/decode_at_ctx.py, 500 tokens) ===
+Q8_0    rep0 ttft=11.49s decode=105.8   rep1 ttft=0.18s decode=106.1
+Q4_K_M  rep0 ttft=11.52s decode=116.3   rep1 ttft=0.18s decode=115.7
+
+=== 4-turn shared 24k prefix (mytests/prefix_turns.py), Q8_0 ===
+turn1 TTFT 11.76s  answer 8768  correct
+turn2 TTFT  0.30s  answer 8692  correct
+turn3 TTFT  0.30s  answer 266   correct
+turn4 TTFT  0.30s  answer 9572  correct
+4/4. The Qwen3-Next-80B scored 3/4 on the identical probe (said 265 for 266).
+
+=== Reference: Qwen3-Next-80B-A3B W4A16 on vLLM, same card, same day ===
+C1 115.73 tok/s / 136.9 W / 1.183 J/tok ; C4 351.6 ; C8 352.35 (4 slots, saturated)
+prefill 6800-7950 tok/s ; 24k decode 111.9 ; 24k TTFT 3.39s cold / 0.14s warm
+
+=== CAVEAT: two variables move at once ===
+Ornith runs on llama.cpp, the 80B on vLLM. Prior measurement on this rig put
+the same 27B at 39 tok/s on llama.cpp against 102 on vLLM at 24k context, so
+the engine gap is large and it is NOT controlled here. The decode figures are
+close enough to be interesting anyway; the prefill and cold-TTFT gaps are
+where the engine most likely dominates.
+
+=== Quantization barely matters, which was not the prediction ===
+Halving the weight bits (Q8_0 -> Q4_K_M) bought +9% at C1, 0% at C4 and C8,
+and 0% on prefill. Decode here is therefore not weight-bandwidth-bound in
+llama.cpp. Take Q8_0 for the quality; it is close to free.
+
+################################################################
+# ENGINE-MATCHED RUN, 2026-09-13: Ornith FP8 on vLLM
+################################################################
+Model: ornith-ai/Ornith-1.5-35B-A3B-FP8 (compressed-tensors W8A8 float,
+36.69 GiB, 16 shards). vLLM 0.27.1, --max-model-len 65536 --max-num-seqs 8
+--gpu-memory-utilization 0.80 --enable-prefix-caching --mamba-cache-mode align.
+KV cache 13.29 GiB / 625,916 tokens. Same card, same 150 W cap, same harness.
+
+On sm_80 vLLM routes FP8 to the WEIGHT-ONLY w8a16 scheme
+(compressed_tensors_w8a16_fp8.py), so the weights are FP8 and the maths is
+bf16. It is not using FP8 tensor cores, because this card has none.
+
+=== Two environment faults had to be fixed first, neither Ampere-related ===
+1. nvrtc: error: failed to open libnvrtc-builtins.so.13.3
+   The humming JIT loads nvrtc from CUDA_HOME (13.3) but its matching builtins
+   .so was not on the loader path. Fix: LD_LIBRARY_PATH=$CUDA_HOME/lib.
+2. RuntimeError: Ninja is required to load C++ extensions
+   ninja IS installed, as a venv package; torch shells out to the binary and
+   the venv's bin was not on PATH because vllm was launched by absolute path.
+   Fix: PATH=$VENV/bin:$PATH.
+Neither is an FP8 or sm_80 limitation. The FP8 MoE loads and runs on Ampere.
+
+=== Results (vs the same-day 80B on the same engine and card) ===
+                        Ornith FP8/vLLM   Qwen3-Next-80B W4A16/vLLM
+decode C1               122.49 tok/s      115.73
+decode C4               345.36            351.60
+decode C8               597.32  (8 slots) 352.35  (4 slots, saturated)
+prefill ~8.9k           8805/9145/9168    6800-7950
+decode at 24k ctx       117.8 / 117.6     111.9
+TTFT 24k cold           3.06-3.08 s       3.39 s
+TTFT 24k warm           0.13 s            0.14 s
+J/token C1              1.127             1.183
+J/token C8              0.241             0.412
+weights on disk         36.69 GiB         40.9 GiB
+4-turn recall           4/4               3/4 (said 265 for 266)
+
+=== The engine was doing most of the talking ===
+Same model, llama.cpp Q8_0 -> vLLM FP8:
+  C1       104.67 -> 122.49   (+17%)
+  C8       274.74 -> 597.32   (+117%)
+  prefill    2333 ->   9145   (+292%)
+  24k TTFT  11.49 ->   3.06 s (3.8x faster)
+So the earlier "80B wins prefill by 3x" was an engine artefact, not a model
+property. Engine-matched, Ornith wins prefill outright.
+
+=== Headroom not used ===
+The FP8 checkpoint retains 785 MTP tensors and 333 vision tensors. This run
+passed no --speculative-config, so the MTP head was not used for speculative
+decoding, and vision was not exercised. vLLM registers Qwen3_5MoeMTP.
+
+################################################################
+# MTP SPECULATIVE DECODING, 2026-09-13
+################################################################
+vLLM auto-builds the draft config for model_type qwen3_5_moe: it rewrites the
+type to qwen3_5_mtp and reads mtp_num_hidden_layers (=1, in text_config) for
+n_predict. No separate drafter download. Enable with:
+
+  --speculative-config '{"method":"mtp","num_speculative_tokens":K}'
+
+Log confirms it: "Detected MTP model. Sharing target model embedding weights
+with the draft model." KV cache drops from 625,916 tokens to ~400-411k,
+because the drafter takes memory. Startup cost rises to ~170 s (69 s of
+torch.compile) from ~40 s.
+
+                      no MTP    MTP k=2   MTP k=1 + batch 8192
+decode C1             122.49    150.52    141.76
+decode C4             345.36    273.06    260.65
+decode C8             597.32    251.95    572.35
+prefill ~8.9k          9145      8917     11013 / 11183
+decode at 24k ctx     117.8      74.4      69.4
+J/token C1             1.127     0.942     0.966
+J/token C8             0.412*    0.321     0.232
+  (*the 80B's figure; Ornith no-MTP C8 was 0.241)
+
+=== Finding 1: the C8 collapse was a scheduler default, not MTP ===
+Enabling speculative decoding makes vLLM warn:
+  "max_num_scheduled_tokens is set to 2048 based on the speculative decoding
+   settings. This may lead to suboptimal performance."
+At k=2 with that default, C8 fell to 251.95 tok/s and the card drew only
+80.9 W at 1170 MHz: it was stalling, not computing. Passing
+--max-num-batched-tokens 8192 restored C8 to 572.35, within 4% of no-MTP,
+and pushed prefill to 11,183 tok/s, the best figure measured on this card for
+any model. If you enable MTP, raise the batch budget in the same breath.
+
+=== Finding 2: MTP helps single stream and hurts long context ===
+C1 gains 16-23%. Decode at 24k context loses ~40% in BOTH k=1 and k=2, so it
+is not a tuning artefact: the verify step costs more as the context grows,
+and acceptance does not pay for it. C4 also stayed down ~25% in both.
+
+=== How to pick ===
+single-stream, short prompts  -> MTP k=2          (150.5 tok/s)
+long context                  -> no MTP           (117.8 tok/s at 24k)
+high concurrency              -> no MTP, or k=1 + batch 8192 (597 / 572)
+best prefill                  -> k=1 + batch 8192 (11,183 tok/s)
+
+There is no single best configuration. Match it to the traffic.
+
+################################################################
+# REASONING BUDGET, 2026-09-13  (bench/reasoning_budget.py)
+################################################################
+Server: Ornith FP8, vLLM 0.27.1, --reasoning-parser qwen3, no MTP,
+VLLM_USE_V2_MODEL_RUNNER=0 (the V2 runner rejects thinking_token_budget).
+Sampling: temperature 0.6, top_p 0.95, top_k 20 (model card, general tasks).
+10 prompts x 6 conditions x 3 reps = 180 requests, 0 errors.
+8 graded prompts (24 graded answers per condition), 2 open-ended.
+
+condition         correct  empty  reasoning med  max   crt   apples
+unbounded           24/24      0             96   447   3/3   3/3
+thinking_off        20/24      0              1     1   2/3   0/3
+budget_1024         24/24      0            101   634   3/3   3/3
+budget_256          22/24      0            102   257   1/3   3/3
+budget_64           22/24      0             65    65   1/3   3/3
+max_tokens=256      19/24      7            100   256   0/3   3/3
+
+(reasoning tokens = completion_tokens minus the answer's tokenized length;
+ unbounded runs had max_tokens 16384 and none hit it)
+
+Grader note: the first pass graded 4 correct crt answers as wrong, because
+it took the LAST number in the reply and the model follows "**301**" with a
+worked check. Regraded on the first number; script fixed.
+
+=== 1. It does not overthink on this set ===
+Unbounded median 96 reasoning tokens, max 447, zero length-stops against a
+16k cap. At 122 tok/s that is ~0.8 s median, ~3.7 s worst. The longest
+thinking was the number-theory prompt (433) and, notably, the open-ended
+one-sentence prose prompt (339): it deliberates more over how to phrase an
+opinion than over arithmetic. Chit-chat thinks ~55 tokens.
+CAVEAT: short, single-turn, checkable prompts only. Its training target is
+long agentic coding (the card evaluates with max_new_tokens up to 131,072),
+which this does not exercise. "Needs limiting" may hold there; unmeasured.
+
+=== 2. thinking_token_budget is an exact hard cap ===
+budget 64 -> max 65 reasoning tokens; budget 256 -> max 257 (the budget
+plus the forced </think>). vLLM masks logits to force the end-of-thinking
+token once the budget is spent, then the model writes its answer.
+budget 1024 never bound on this set (the one 634 run finished on its own).
+
+=== 3. The cost of limiting is silent, confident wrong answers ===
+Budget 256 and 64 broke only the hardest prompt, and not with an empty reply
+or a hedge: 4 of 6 answered "121" flatly, where the answer is 301.
+Disabling thinking was worse than any budget: 0/3 on the apples word problem
+("5", "5", "6") plus one crt miss. A truncated thought produces a confident
+wrong answer, not an "I'm not sure". For an honesty-first deployment that
+matters more than the accuracy number.
+
+=== 4. Never limit it with max_tokens ===
+max_tokens=256 with no thinking budget returned 7 of 30 EMPTY answers with
+finish_reason=length, and one truncated code block. The cap landed mid-think,
+so there was no answer to return. This is the same silent empty-response
+trap recorded for the 27B. Use thinking_token_budget, which bounds the
+thought and still leaves room for the answer.
+
+=== Recommendation ===
+If a limit is wanted, thinking_token_budget ~1024 cost nothing here. 256 is
+survivable for easy traffic but silently wrong on hard problems. Do not
+disable thinking, and never use max_tokens as the limit.
