@@ -14,13 +14,13 @@ $ nvidia-smi --query-gpu=index,name,uuid,pci.bus_id,memory.total,vbios_version \
 1, NVIDIA Graphics Device, GPU-aec84db3-..., 00000000:03:00.0, 65536 MiB, 92.00.67.00.01
 ```
 
-Note `3D controller`, not `VGA compatible controller` — it has no display
+Note `3D controller`, not `VGA compatible controller`. It has no display
 engine. It reports compute capability **8.0** (GA100), so build for `sm_80`.
 
 Useful consequence: because it is `sm_80` and not `sm_86`/`sm_89`, wheels
 built only for consumer Ampere/Ada will not have a kernel for it. Most
 mainstream builds (PyTorch, vLLM) do ship sm_80 because that is the A100, so
-in practice this is a non-issue — but check if you build anything yourself.
+in practice this is a non-issue, but check if you build anything yourself.
 
 ## The PCIe link is the headline constraint
 
@@ -59,7 +59,7 @@ What this costs you in practice:
 | systemd unit startup | set `TimeoutStartSec=900` or it gets killed mid-load |
 | Tensor parallel across 2 cards | avoid; one model per card |
 | CPU offload / layer streaming | not viable, fit in VRAM |
-| Inference itself | **unaffected** — weights and KV live in VRAM |
+| Inference itself | **unaffected**, weights and KV live in VRAM |
 
 The last row is why the card is still worth using. Once loaded, the PCIe link
 carries only prompts and tokens, which are kilobytes.
@@ -91,7 +91,7 @@ Power limits reset on reboot and on every driver reload.
 Passive heatsink, no fan, designed for a mining frame's front-to-back airflow.
 It will thermally throttle on a desk. With a blower shroud pushing air through
 it, short benchmark runs held 52-59 C. Our runs are 8-45 seconds, so those are
-not steady-state numbers — a card held at load for an hour sits hotter.
+not steady-state numbers. A card held at load for an hour sits hotter.
 
 `nvidia-smi` reports no fan speed (`Fan Speed: N/A`); there is no fan to
 report. Watch `temperature.gpu` and the `HW Thermal Slowdown` clock event

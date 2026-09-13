@@ -18,25 +18,59 @@ the raw JSONL are in [`bench/`](bench/) so you can check the arithmetic.
 
 ## Headline numbers
 
-Serving **Qwen3-Next-80B-A3B (W4A16)** on one 170HX under vLLM 0.27.1:
+Two models, both on one 170HX, both under vLLM. The 27B is the fast one; the
+80B is the one that only fits because the card has 64 GB.
 
-| metric | measured |
-|---|---|
-| prefill | **7400-7950 tok/s** (~10k-token prompt, no prefix cache) |
-| decode, single stream | **121 tok/s** on prose |
-| power under load | **143-151 W** |
-| efficiency | **1.22 J/token** |
-| temperature | 52-59 C (short runs, blower shroud) |
-| KV cache at 64k ctx | 242k tokens in 5.85 GiB |
+| | **Qwen3.8-27B** W4A16 + DFlash2 | **Qwen3-Next-80B-A3B** W4A16 |
+|---|---|---|
+| architecture | 27B dense | 80B MoE, ~3B active |
+| weights on disk | 22 GB + 1.8 GB drafter | 41 GB |
+| **decode, single stream** | **152 tok/s** | **121 tok/s** |
+| **decode at 24k context** | **102 tok/s** | not measured |
+| **prefill (~10k tokens)** | not measured on this card | **7400-7950 tok/s** |
+| concurrency 8, end to end | 278 tok/s | not measured (4 slots) |
+| TTFT, 24k prefix, cold | 11.8 s | not measured |
+| TTFT, 24k prefix, warm | 0.49 s | not measured |
+| power under load | 245 W (at a 250 W cap) | 143-151 W (at a 150 W cap) |
+| efficiency | not measured | 1.22 J/token |
+| temperature | 72 C | 52-59 C |
+| context served | 56k, 4 slots | 64k, 4 slots |
+| VRAM left over | ~40 GB | ~20 GB |
+| measured | 2026-08-23 | 2026-09-09 / 2026-09-12 |
 
-For comparison on the same host, same harness: an RTX 4090 runs at 1.82
-J/token and an RTX 3090 at 4.11 J/token. The 170HX is the most efficient card
-in the machine by a wide margin, and the only one that can hold an 80B model
-at all.
+Empty cells are honestly empty: the two models were benchmarked at different
+times for different reasons, and neither run covered the other's axes. The
+power figures are not comparable either: the 27B run predates the power sweep
+that set the 150 W cap, so it was free to draw 245 W. Do not read the power
+rows as a model-to-model comparison.
 
-Serving **Qwen3.8-27B (W4A16 + speculative decode)** on the same card:
-152 tok/s single-stream, **102 tok/s at 24k context**, 278 tok/s at
-concurrency 8, 24k-token prefix cold TTFT 11.8 s / warm 0.49 s.
+### What the table says
+
+**The 27B decodes 26% faster; the 80B prefills.** For short prompts and chatty
+turns the 27B wins. For long single-shot work, a document to summarise or a
+large context to answer over, the 80B is the faster server end to end, because
+an MoE with ~3B active parameters prefills at nearly 8000 tok/s. Pick by prompt
+shape, not by parameter count.
+
+**Neither number is the card's ceiling.** Both are single-stream. The 170HX has
+bandwidth and VRAM to spare in both configurations, and the 27B at concurrency
+8 more than doubles to 278 tok/s.
+
+**The 27B's decode rate depends on speculative decoding accepting drafts.** On
+trivially predictable output the same stack measures 364 tok/s; on real prose
+it settles near 152-161. Any benchmark of this model using a repetitive prompt
+overstates it by more than 2x. The 80B has no drafter, so its 121 tok/s has no
+such caveat.
+
+For comparison on the same host and harness: an RTX 4090 runs at 1.82 J/token
+and an RTX 3090 at 4.11 J/token, against the 170HX's 1.22. The 170HX is the
+most efficient card in the machine by a wide margin, and the only one that can
+hold an 80B model at all.
+
+The same 27B stack on other cards, so the card is the only variable: 133-135
+tok/s on a 3090, 157-163 on a 4090, against the 170HX's 152. At 24k context it
+is 88 on the 3090 against the 170HX's 102. Full three-way table in
+[docs/benchmarks.md](docs/benchmarks.md#the-27b-on-the-170hx-head-to-head).
 
 Full detail and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
@@ -48,7 +82,7 @@ Full detail and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 parallelism, no NVLink, no second PSU rail. A 43 GB W4A16 80B fits with 20 GB
 left over.
 
-**Memory bandwidth.** 1325 GB/s read, 1292 GB/s triad measured — 88.7% of the
+**Memory bandwidth.** 1325 GB/s read, 1292 GB/s triad measured, 88.7% of the
 1493 GB/s theoretical at its clock. Single-stream LLM decode is
 bandwidth-bound, and this card has A100-class bandwidth.
 
@@ -101,15 +135,15 @@ expect hotter under sustained load.
 
 ## Start here
 
-1. [docs/hardware.md](docs/hardware.md) — identifying the card, PCIe, power,
+1. [docs/hardware.md](docs/hardware.md): identifying the card, PCIe, power,
    cooling, and what "Device Max: 1" costs you.
-2. [docs/setup.md](docs/setup.md) — driver, CUDA, vLLM, and the two pinning
+2. [docs/setup.md](docs/setup.md): driver, CUDA, vLLM, and the two pinning
    rules that will otherwise send your job to the wrong GPU.
-3. [docs/benchmarks.md](docs/benchmarks.md) — every number above, with method.
-4. [docs/tuning.md](docs/tuning.md) — why we do not overclock this card, with
+3. [docs/benchmarks.md](docs/benchmarks.md): every number above, with method.
+4. [docs/tuning.md](docs/tuning.md): why we do not overclock this card, with
    the measurement that closed the question.
-5. [configs/](configs/) — the systemd units, ready to adapt.
-6. [bench/](bench/) — the harness and raw data. Reproduce it on your card.
+5. [configs/](configs/): the systemd units, ready to adapt.
+6. [bench/](bench/): the harness and raw data. Reproduce it on your card.
 
 ---
 

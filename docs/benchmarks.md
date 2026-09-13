@@ -48,6 +48,13 @@ work the big model on the slow card is the faster server end to end.
 **The 27B's decode rate is not one number.** 364 tok/s on predictable output,
 161 on prose. See rule 1 above.
 
+## Both models on the same card
+
+A side-by-side of the 27B and the 80B, both on the 170HX, is in the
+[README](../README.md#headline-numbers). The short version: the 27B decodes 26%
+faster (152 vs 121 tok/s) and the 80B prefills at nearly 8000 tok/s, so the
+right choice depends on prompt shape rather than parameter count.
+
 ## The 27B on the 170HX, head to head
 
 The same 27B W4A16 stack (vLLM with speculative decoding and prefix caching)
@@ -56,12 +63,12 @@ run on three different cards, so the card is the only variable:
 | | 170HX | RTX 3090 | RTX 4090 |
 |---|---|---|---|
 | decode, single stream | **152 tok/s** | 133-135 | 157-163 |
-| decode at 24k context | **102 tok/s** | 88 | — |
-| concurrency 8, end to end | 278 tok/s | — | 373-451 |
-| 24k prefix TTFT, cold | 11.8 s | 19.5 s | — |
-| 24k prefix TTFT, warm | 0.49 s | 0.75 s | — |
-| power under load | 245 W (250 W cap) | — | — |
-| temperature | 72 C | — | — |
+| decode at 24k context | **102 tok/s** | 88 | not measured |
+| concurrency 8, end to end | 278 tok/s | not measured | 373-451 |
+| 24k prefix TTFT, cold | 11.8 s | 19.5 s | not measured |
+| 24k prefix TTFT, warm | 0.49 s | 0.75 s | not measured |
+| power under load | 245 W (250 W cap) | not measured | not measured |
+| temperature | 72 C | not measured | not measured |
 
 For reference, the same model on llama.cpp on the 4090 does 39 tok/s at 24k
 context. The 170HX's **102 tok/s at 24k is 2.6x that**, and its HBM2e makes it
@@ -96,7 +103,7 @@ Same harness, same workload shape, each card serving its own model:
 | card | J/token | peak temp |
 |---|---|---|
 | **CMP 170HX** | **1.22** | 59 C |
-| RTX 4090 | 1.82 | — |
+| RTX 4090 | 1.82 | 70 C |
 | RTX 3090 | 4.11 | 83 C |
 
 The 4090 tells the same story from the other side: it holds ~148 tok/s from a
@@ -121,7 +128,7 @@ TRIAD  1292 GB/s
 ```
 
 That is **88.7%** of the 1493 GB/s theoretical at this memory clock, which is a
-good result — HBM2e delivering close to spec.
+good result, HBM2e delivering close to spec.
 
 For contrast, llama.cpp on the same card extracts only ~728 GB/s effective. For
 that engine the card is compute-bound, not bandwidth-bound, which is the

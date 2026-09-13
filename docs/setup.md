@@ -61,7 +61,7 @@ export CUDA_VISIBLE_DEVICES=GPU-aec84db3-b8b3-9a07-41a7-32ac25ed2b8c
 A UUID is unambiguous and survives reboots, driver reloads, and adding cards.
 
 For anything you write yourself, also set `CUDA_DEVICE_ORDER=PCI_BUS_ID` and
-verify with `torch.cuda.get_device_properties(i).pci_bus_id` — it is decimal,
+verify with `torch.cuda.get_device_properties(i).pci_bus_id`. It is decimal,
 so bus `0x42` reads as `66`.
 
 vLLM will warn you about this itself in a mixed box:

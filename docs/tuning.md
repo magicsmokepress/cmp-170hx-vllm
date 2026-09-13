@@ -22,8 +22,8 @@ thermal and power headroom to spare. There is nothing being held back.
 
 ## Raising the memory clock would not help anyway
 
-Measured bandwidth is 1325 GB/s read, 1292 GB/s triad — 88.7% of the 1493 GB/s
-theoretical at the stock clock. Meanwhile llama.cpp extracts only ~728 GB/s
+Measured bandwidth is 1325 GB/s read, 1292 GB/s triad, which is 88.7% of the
+1493 GB/s theoretical at the stock clock. Meanwhile llama.cpp extracts only ~728 GB/s
 effective. The engine is leaving 45% of the available bandwidth unused, so the
 card is **compute-bound for that workload, not bandwidth-bound**, and more
 memory clock has nothing to push into.

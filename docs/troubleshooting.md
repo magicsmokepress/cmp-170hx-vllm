@@ -28,7 +28,7 @@ export CUDA_VISIBLE_DEVICES=GPU-aec84db3-...
 ```
 
 Verify from inside the process with
-`torch.cuda.get_device_properties(i).pci_bus_id` — it is decimal, so bus `0x42`
+`torch.cuda.get_device_properties(i).pci_bus_id`. It is decimal, so bus `0x42`
 prints as `66`.
 
 The symptom that gives it away: you sample `nvidia-smi -i N` (which orders by
@@ -53,8 +53,8 @@ PCIe Generation
 ```
 
 `Device Max` below `Host Max` means the card is the limit, not the slot or a
-signal-integrity fallback. Check `Replays Since Reset` too — a nonzero and
-climbing count would point at signal integrity; ours reads 0.
+signal-integrity fallback. Check `Replays Since Reset` too: a nonzero and
+climbing count would point at signal integrity, and ours reads 0.
 
 Measure it properly with [`bench/pcie_bw.py`](../bench/pcie_bw.py), which holds
 a compute kernel running so the card is in P0.
